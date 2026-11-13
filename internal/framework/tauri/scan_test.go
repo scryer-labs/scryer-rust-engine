@@ -2,9 +2,12 @@ package tauri
 
 import (
 	"context"
+	"os"
+	"path/filepath"
 	"testing"
 	"testing/fstest"
 
+	"github.com/scryer-labs/scryer-rust-engine/internal/rust"
 	sitter "github.com/tree-sitter/go-tree-sitter"
 	grammar "github.com/tree-sitter/tree-sitter-rust/bindings/go"
 )
@@ -56,5 +59,38 @@ fn unrelated(app: &Logger) { app.emit("not_tauri", ()); }
 			endpoint.Symbol != expected.symbol || endpoint.File != "app/src/lib.rs" || endpoint.Line == 0 {
 			t.Fatalf("unexpected endpoint: %+v", endpoint)
 		}
+	}
+}
+
+func TestResolveModuleQualifiedRegistration(t *testing.T) {
+	root := t.TempDir()
+	for file, contents := range map[string]string{
+		"Cargo.toml":      "[package]\nname='fixture'\n",
+		"tauri.conf.json": "{}",
+		"src/lib.rs": `mod commands;
+fn setup() {
+	tauri::Builder::default().invoke_handler(tauri::generate_handler![crate::commands::save]);
+}`,
+		"src/commands.rs": `#[tauri::command]
+pub fn save() {}`,
+	} {
+		target := filepath.Join(root, file)
+		if err := os.MkdirAll(filepath.Dir(target), 0755); err != nil {
+			t.Fatal(err)
+		}
+		if err := os.WriteFile(target, []byte(contents), 0600); err != nil {
+			t.Fatal(err)
+		}
+	}
+	collector := New(os.DirFS(root))
+	result, err := rust.Scan(context.Background(), root, []string{"architecture"}, collector.Observe)
+	if err != nil {
+		t.Fatal(err)
+	}
+	architecture := result["architecture"].(map[string]any)
+	collector.ResolveRegistrations(architecture["modules"].([]rust.Module), architecture["components"].([]rust.Target))
+	endpoints := collector.apps[0].Endpoints
+	if len(endpoints) != 2 || endpoints[1].Declaration == nil || endpoints[1].Declaration.File != "src/commands.rs" {
+		t.Fatalf("missing declaration location: %+v", endpoints)
 	}
 }

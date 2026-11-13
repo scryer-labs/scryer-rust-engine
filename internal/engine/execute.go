@@ -91,12 +91,22 @@ func (r Request) scan(ctx context.Context) (*report, *protocolError) {
 		framework = tauri.New(os.DirFS(root))
 		observers = append(observers, framework.Observe, pipes.Observe)
 	}
-	result, err := rust.Scan(ctx, root, selected, observers...)
+	scanFacts := selected
+	if framework != nil && !slices.Contains(selected, "architecture") {
+		scanFacts = append(slices.Clone(selected), "architecture")
+	}
+	result, err := rust.Scan(ctx, root, scanFacts, observers...)
 	if err != nil {
 		return nil, &protocolError{"RUST_SCAN_ERROR", err.Error()}
 	}
 	if framework != nil {
+		architecture := result["architecture"].(map[string]any)
+		framework.ResolveRegistrations(architecture["modules"].([]rust.Module), architecture["components"].([]rust.Target))
+		if !slices.Contains(selected, "architecture") {
+			delete(result, "architecture")
+		}
 		ipc := framework.Facts()
+		ipc["limitations"] = []string{"dynamic-channel-names", "tauri-imported-handlers", "tokio-wrapper-flow"}
 		ipc["windows"] = map[string]any{"namedPipe": pipes}
 		result["ipc"] = ipc
 	}

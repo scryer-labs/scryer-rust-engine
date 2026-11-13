@@ -3,6 +3,7 @@ package tauri
 
 import (
 	"context"
+	"fmt"
 	"io/fs"
 	"path"
 	"strings"
@@ -18,10 +19,13 @@ type Site struct {
 
 type Endpoint struct {
 	Site
-	Name   string `json:"name"`
-	Role   string `json:"role"`
-	Kind   string `json:"kind"`
-	Symbol string `json:"symbol,omitempty"`
+	Name             string `json:"name"`
+	Role             string `json:"role"`
+	Kind             string `json:"kind"`
+	Symbol           string `json:"symbol,omitempty"`
+	Declaration      *Site  `json:"declaration,omitempty"`
+	ResolutionReason string `json:"resolutionReason,omitempty"`
+	ModuleID         string `json:"moduleId,omitempty"`
 }
 
 type App struct {
@@ -58,7 +62,19 @@ func (c *Collector) Observe(ctx context.Context, file string, root *sitter.Node,
 	endpoints := &c.apps[index].Endpoints
 	appendEndpoint := func(node *sitter.Node, kind, role, name, symbol string) {
 		pos := node.StartPosition()
-		*endpoints = append(*endpoints, Endpoint{Site{file, pos.Row + 1, pos.Column + 1}, name, role, kind, symbol})
+		module := ""
+		for parent := node.Parent(); parent != nil; parent = parent.Parent() {
+			if parent.Kind() == "mod_item" {
+				at := parent.StartPosition()
+				module = fmt.Sprintf("%s:%d:%d", file, at.Row+1, at.Column+1)
+				break
+			}
+		}
+		endpoint := Endpoint{Site: Site{file, pos.Row + 1, pos.Column + 1}, Name: name, Role: role, Kind: kind, Symbol: symbol, ModuleID: module}
+		if role == "registration" && localPathMayBeShadowed(node, symbol) {
+			endpoint.ResolutionReason = "local-path-may-be-shadowed"
+		}
+		*endpoints = append(*endpoints, endpoint)
 	}
 	return observe(ctx, root, source, appendEndpoint, nil, nil)
 }
@@ -197,7 +213,7 @@ func handlers(macro *sitter.Node, source []byte, add record) {
 			if !valid {
 				continue
 			}
-			if len(parts)%2 == 0 && child.Kind() != "identifier" || len(parts)%2 == 1 && child.Kind() != "::" {
+			if len(parts)%2 == 0 && child.Kind() != "identifier" && child.Kind() != "crate" && child.Kind() != "self" && child.Kind() != "super" || len(parts)%2 == 1 && child.Kind() != "::" {
 				valid = false
 				continue
 			}
