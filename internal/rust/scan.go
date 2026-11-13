@@ -30,6 +30,7 @@ type Module struct {
 	ComponentIDs []string     `json:"componentIds,omitempty"`
 	Attributes   []string     `json:"attributes,omitempty"`
 	TestContext  *TestContext `json:"testContext,omitempty"`
+	visibility   string
 }
 
 type Import struct {
@@ -102,7 +103,7 @@ func Scan(ctx context.Context, root string, selected []string, observers ...Sour
 	architecture := slices.Contains(selected, "architecture")
 	files := slices.Contains(selected, "files")
 	if slices.Contains(selected, "call-graph") {
-		s.graph = &callGraph{ProjectID: root, Basis: "tree-sitter-syntax", Symbols: []functionSymbol{}, Calls: []callSite{}}
+		s.graph = &callGraph{ProjectID: root, Basis: "tree-sitter-syntax", Symbols: []functionSymbol{}, Calls: []callSite{}, blockers: map[moduleKey]map[string]bool{}}
 	}
 	collect := architecture || files || s.graph != nil
 	if !collect && len(observers) == 0 {
@@ -118,7 +119,9 @@ func Scan(ctx context.Context, root string, selected []string, observers ...Sour
 		s.attachComponents(targets)
 	}
 	if s.graph != nil {
-		s.graph.resolve(targets, s.files, s.imports, s.modules)
+		if err := s.graph.resolve(ctx, targets, s.modules); err != nil {
+			return nil, err
+		}
 		facts["call-graph"] = s.graph
 	}
 	if architecture {
@@ -196,6 +199,9 @@ func (s *scanner) collect(ctx context.Context, node *sitter.Node, file, moduleDi
 			continue
 		}
 		scope := testContext(inherited, attributes, child, file, source)
+		if s.graph != nil && moduleContainer(node) {
+			s.graph.block(moduleKey{file, parent}, child, source)
+		}
 		switch child.Kind() {
 		case "mod_item":
 			name := child.ChildByFieldName("name")
@@ -203,6 +209,7 @@ func (s *scanner) collect(ctx context.Context, node *sitter.Node, file, moduleDi
 				break
 			}
 			module := Module{Location: loc, Name: name.Utf8Text(source), ParentID: parent, TestContext: scope}
+			module.visibility = itemVisibility(child, source)
 			for _, attr := range attributes {
 				module.Attributes = append(module.Attributes, attr.text)
 			}
@@ -219,6 +226,9 @@ func (s *scanner) collect(ctx context.Context, node *sitter.Node, file, moduleDi
 			}
 		case "use_declaration":
 			if argument := child.ChildByFieldName("argument"); argument != nil {
+				if s.graph != nil && moduleContainer(node) {
+					s.graph.addImports(moduleKey{file, parent}, argument, itemVisibility(child, source), attributes, source)
+				}
 				s.imports = append(s.imports, Import{Location: loc, Expression: argument.Utf8Text(source), ModuleID: parent, Paths: importPaths(argument, "", source), TestContext: scope})
 			}
 		case "inner_attribute_item", "token_tree":
@@ -228,9 +238,9 @@ func (s *scanner) collect(ctx context.Context, node *sitter.Node, file, moduleDi
 			if s.graph != nil {
 				switch child.Kind() {
 				case "function_item", "closure_expression":
-					nestedCaller = s.graph.symbol(file, child, scope, attributes, source)
+					nestedCaller = s.graph.symbol(file, parent, child, scope, attributes, source)
 				case "call_expression":
-					s.graph.call(file, caller, child, scope, source)
+					s.graph.call(file, caller, parent, child, scope, source)
 				}
 			}
 			if value := explicitCratePath(child, source); value != "" {
