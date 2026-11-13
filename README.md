@@ -34,3 +34,13 @@ outside this slice.
 and literal event emissions. The collector lives in `internal/framework/tauri`
 and consumes the syntax trees produced by the generic Rust scanner. The
 result is source evidence grouped by Tauri config path.
+
+## Windows named pipes
+
+`--facts ipc` also collects Tokio Windows named-pipe endpoints in
+`windows.namedPipe`. The collector is in `internal/ipc/windows/namedpipe`.
+It recognizes directly chained `ClientOptions::new().open(...)` and
+`ServerOptions::new().create(...)`, including explicit read/write settings
+and local pipe names from literals or unique constants in source scope.
+It records the source locations and normalizes access modes for the same
+Core matcher used by C++. It does not build or run the target.

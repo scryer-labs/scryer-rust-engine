@@ -9,6 +9,7 @@ import (
 	"slices"
 
 	"github.com/scryer-labs/scryer-rust-engine/internal/framework/tauri"
+	"github.com/scryer-labs/scryer-rust-engine/internal/ipc/windows/namedpipe"
 	"github.com/scryer-labs/scryer-rust-engine/internal/rust"
 )
 
@@ -84,17 +85,20 @@ func (r Request) scan(ctx context.Context) (*report, *protocolError) {
 		return nil, &protocolError{"INVALID_REQUEST", "scan repository must be an existing directory"}
 	}
 	var framework *tauri.Collector
+	pipes := namedpipe.Collector{Endpoints: []namedpipe.Endpoint{}}
 	var observers []rust.SourceObserver
 	if slices.Contains(selected, "ipc") {
 		framework = tauri.New(os.DirFS(root))
-		observers = append(observers, framework.Observe)
+		observers = append(observers, framework.Observe, pipes.Observe)
 	}
 	result, err := rust.Scan(ctx, root, selected, observers...)
 	if err != nil {
 		return nil, &protocolError{"RUST_SCAN_ERROR", err.Error()}
 	}
 	if framework != nil {
-		result["ipc"] = framework.Facts()
+		ipc := framework.Facts()
+		ipc["windows"] = map[string]any{"namedPipe": pipes}
+		result["ipc"] = ipc
 	}
 	return &report{1, root, result}, nil
 }
