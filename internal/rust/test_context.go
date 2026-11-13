@@ -126,3 +126,67 @@ func cfgRequiresTest(tokens []*sitter.Node, source []byte) (bool, bool) {
 		return false, false
 	}
 }
+
+// A file inherits a test-only guard only when every known route from a Cargo
+// target into that file requires one. A production route always wins.
+func (s *scanner) inheritExternalTestContexts(targets []Target) {
+	type route struct {
+		file  string
+		guard *TestContext
+	}
+	edges := map[string][]Module{}
+	for _, module := range s.modules {
+		if module.Resolution == "resolved" {
+			edges[module.File] = append(edges[module.File], module)
+		}
+	}
+	queue := make([]route, 0, len(targets))
+	for _, target := range targets {
+		queue = append(queue, route{file: target.File})
+	}
+	production := map[string]bool{}
+	test := map[string]*TestContext{}
+	for i := 0; i < len(queue); i++ {
+		current := queue[i]
+		if current.guard == nil {
+			if production[current.file] {
+				continue
+			}
+			production[current.file] = true
+		} else {
+			if test[current.file] != nil {
+				continue
+			}
+			test[current.file] = current.guard
+		}
+		for _, module := range edges[current.file] {
+			guard := current.guard
+			if module.TestContext != nil {
+				guard = module.TestContext
+			}
+			queue = append(queue, route{module.TargetFile, guard})
+		}
+	}
+	inherit := func(file string, context **TestContext) {
+		if *context == nil && !production[file] {
+			*context = test[file]
+		}
+	}
+	for i := range s.modules {
+		inherit(s.modules[i].File, &s.modules[i].TestContext)
+	}
+	for i := range s.imports {
+		inherit(s.imports[i].File, &s.imports[i].TestContext)
+	}
+	for i := range s.references {
+		inherit(s.references[i].File, &s.references[i].TestContext)
+	}
+	if s.graph != nil {
+		for i := range s.graph.Symbols {
+			inherit(s.graph.Symbols[i].Definition.File, &s.graph.Symbols[i].TestContext)
+		}
+		for i := range s.graph.Calls {
+			inherit(s.graph.Calls[i].Site.File, &s.graph.Calls[i].TestContext)
+		}
+	}
+}

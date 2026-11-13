@@ -18,6 +18,7 @@ type Manifest struct {
 	Workspace    *Workspace   `json:"workspace,omitempty"`
 	Targets      []Target     `json:"targets"`
 	Dependencies []Dependency `json:"dependencies"`
+	Edition      string       `json:"edition,omitempty"`
 }
 
 type Workspace struct {
@@ -60,6 +61,7 @@ func readManifest(fsys fs.FS, file string) (Manifest, error) {
 	var document struct {
 		Package *struct {
 			Name     string
+			Edition  any
 			Autolib  *bool
 			Autobins *bool
 			Build    any
@@ -113,6 +115,7 @@ func readManifest(fsys fs.FS, file string) (Manifest, error) {
 		return result, nil
 	}
 	result.Package = pkg.Name
+	result.Edition, _ = pkg.Edition.(string)
 	dir := path.Dir(file)
 	addTarget := func(kind, name, source string, explicit bool) {
 		if source == "" || name == "" || filepath.IsAbs(source) {

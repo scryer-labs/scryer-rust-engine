@@ -112,3 +112,50 @@ fn helper() { crate::root(); }
 		}
 	}
 }
+
+func TestCallGraphUsesExplicitLocalCargoDependency(t *testing.T) {
+	root := t.TempDir()
+	for file, source := range map[string]string{
+		"Cargo.toml": `[package]
+name = "sample"
+edition = "2021"
+[dependencies]
+alias = { package = "helper", path = "helper" }
+optional = { package = "helper", path = "helper", optional = true }
+`,
+		"src/lib.rs": `use alias::work as do_work;
+fn run() { do_work(); alias::work(); alias::private(); optional::work(); }
+struct Worker;
+impl Worker {
+    fn new() -> Self { Self }
+    fn step(&self) {}
+    fn run(&self) { Self::new(); self.step(); }
+}
+`,
+		"helper/Cargo.toml": "[package]\nname='helper'\n",
+		"helper/src/lib.rs": "pub fn work() {}\nfn private() {}",
+	} {
+		target := filepath.Join(root, file)
+		if err := os.MkdirAll(filepath.Dir(target), 0755); err != nil {
+			t.Fatal(err)
+		}
+		if err := os.WriteFile(target, []byte(source), 0600); err != nil {
+			t.Fatal(err)
+		}
+	}
+	report, err := Scan(context.Background(), root, []string{"call-graph"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	calls := report["call-graph"].(*callGraph).Calls
+	if len(calls) != 6 {
+		t.Fatalf("calls: %+v", calls)
+	}
+	for i, call := range calls {
+		if i < 2 && (call.Resolution != "resolved" || call.TargetID != "helper/src/lib.rs:0") ||
+			i >= 2 && i < 4 && (call.Resolution != "unresolved" || call.Reason == "") ||
+			i >= 4 && (call.Resolution != "resolved" || call.TargetID == "") {
+			t.Errorf("unexpected call %+v", call)
+		}
+	}
+}

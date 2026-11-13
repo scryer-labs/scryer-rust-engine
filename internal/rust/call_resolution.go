@@ -2,6 +2,7 @@ package rust
 
 import (
 	"context"
+	"path"
 	"strings"
 
 	sitter "github.com/tree-sitter/go-tree-sitter"
@@ -65,16 +66,17 @@ type moduleInstance struct {
 }
 
 type callIndex struct {
-	roots       map[string]*moduleInstance
-	instances   map[moduleKey][]*moduleInstance
-	functions   map[moduleKey]map[string][]functionSymbol
-	imports     map[moduleKey]map[string][]callImport
-	blockers    map[moduleKey]map[string]bool
-	libraries   map[string]Target
-	moduleNames map[moduleKey]map[string]bool
+	roots        map[string]*moduleInstance
+	instances    map[moduleKey][]*moduleInstance
+	functions    map[moduleKey]map[string][]functionSymbol
+	imports      map[moduleKey]map[string][]callImport
+	blockers     map[moduleKey]map[string]bool
+	libraries    map[string]Target
+	dependencies map[string]map[string]Target
+	moduleNames  map[moduleKey]map[string]bool
 }
 
-func (g *callGraph) resolve(ctx context.Context, targets []Target, modules []Module) error {
+func (g *callGraph) resolve(ctx context.Context, targets []Target, modules []Module, manifests []Manifest) error {
 	index := callIndex{
 		roots: map[string]*moduleInstance{}, instances: map[moduleKey][]*moduleInstance{},
 		functions: map[moduleKey]map[string][]functionSymbol{}, imports: map[moduleKey]map[string][]callImport{},
@@ -116,6 +118,7 @@ func (g *callGraph) resolve(ctx context.Context, targets []Target, modules []Mod
 		index.roots[target.ID] = root
 		index.addModule(root, declarations, map[moduleKey]bool{})
 	}
+	index.dependencies = localCrateDependencies(manifests, index.libraries)
 	for i := range g.Calls {
 		if err := ctx.Err(); err != nil {
 			return err
@@ -135,9 +138,10 @@ func (g *callGraph) resolve(ctx context.Context, targets []Target, modules []Mod
 			id = target
 		}
 		if id != "" {
-			site.TargetID, site.Resolution = id, "resolved"
+			site.TargetID, site.Resolution, site.Reason = id, "resolved", ""
 		}
 	}
+	g.resolveInherentCalls()
 	return nil
 }
 
@@ -161,10 +165,19 @@ func (x *callIndex) addModule(instance *moduleInstance, declarations map[moduleK
 			continue
 		}
 		child := &moduleInstance{visibility: module.visibility, key: key, parent: instance, target: instance.target, children: map[string][]*moduleInstance{},
-			conditional: instance.conditional || len(module.Attributes) != 0}
+			conditional: instance.conditional || hasConditionalModuleAttributes(module.Attributes)}
 		instance.children[module.Name] = append(instance.children[module.Name], child)
 		x.addModule(child, declarations, ancestors)
 	}
+}
+
+func hasConditionalModuleAttributes(attributes []string) bool {
+	for _, attr := range attributes {
+		if strings.HasPrefix(strings.Join(strings.Fields(attr), ""), "#[cfg") {
+			return true
+		}
+	}
+	return false
 }
 
 type lookup struct {
@@ -223,7 +236,8 @@ func (x *callIndex) resolvePath(module *moduleInstance, parts []string, viewer *
 		// Relative imports rooted in local identifiers have edition-dependent
 		// lookup. Explicit crate/self/super and the Cargo library are supported.
 		lib := x.libraries[module.target.Manifest]
-		if path[0] != "crate" && path[0] != "self" && path[0] != "super" && path[0] != lib.Name {
+		if path[0] != "crate" && path[0] != "self" && path[0] != "super" && path[0] != lib.Name &&
+			x.dependencies[module.target.Manifest][path[0]].ID == "" {
 			return ""
 		}
 		return x.resolvePath(module, append(path, parts[1:]...), module, seen)
@@ -232,10 +246,53 @@ func (x *callIndex) resolvePath(module *moduleInstance, parts []string, viewer *
 		return ""
 	}
 	lib := x.libraries[module.target.Manifest]
-	if viewer.target.ID == module.target.ID && module.target.Kind == "bin" && lib.Name == first && len(parts) > 1 && lib.ID != module.target.ID {
-		return x.resolvePath(x.roots[lib.ID], parts[1:], viewer, seen)
+	if viewer.target.ID == module.target.ID && len(parts) > 1 {
+		if lib.Name == first && lib.ID != module.target.ID && module.target.Kind != "lib" && module.target.Kind != "build" {
+			return x.resolvePath(x.roots[lib.ID], parts[1:], viewer, seen)
+		}
+		if dependency := x.dependencies[module.target.Manifest][first]; dependency.ID != "" && module.target.Kind != "build" {
+			return x.resolvePath(x.roots[dependency.ID], parts[1:], viewer, seen)
+		}
 	}
 	return ""
+}
+
+// Resolve explicitly declared, unconditional local Cargo dependencies.
+func localCrateDependencies(manifests []Manifest, libraries map[string]Target) map[string]map[string]Target {
+	result := map[string]map[string]Target{}
+	for _, manifest := range manifests {
+		switch manifest.Edition {
+		case "2018", "2021", "2024":
+		default:
+			continue
+		}
+		candidates := map[string]Target{}
+		blocked := map[string]bool{}
+		for _, dependency := range manifest.Dependencies {
+			if dependency.Scope == "build" || dependency.Scope == "workspace" {
+				continue
+			}
+			name := strings.ReplaceAll(dependency.Name, "-", "_")
+			declared, _ := dependency.Declared.(map[string]any)
+			location, _ := declared["path"].(string)
+			if dependency.Scope != "normal" || dependency.Condition != "" || location == "" || path.IsAbs(location) ||
+				declared["optional"] == true || declared["workspace"] == true {
+				blocked[name] = true
+				continue
+			}
+			library := libraries[path.Join(path.Dir(manifest.File), location, "Cargo.toml")]
+			if library.ID == "" || candidates[name].ID != "" {
+				blocked[name] = true
+				continue
+			}
+			candidates[name] = library
+		}
+		for name := range blocked {
+			delete(candidates, name)
+		}
+		result[manifest.File] = candidates
+	}
+	return result
 }
 
 func visibleFrom(module, viewer *moduleInstance, visibility string) bool {

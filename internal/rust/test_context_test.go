@@ -76,3 +76,44 @@ fn after() { crate::domain::after(); }
 		check(references[i].Path, references[i].TestContext, want)
 	}
 }
+
+func TestExternalModuleInheritsOnlyProvenTestContext(t *testing.T) {
+	root := t.TempDir()
+	for file, data := range map[string]string{
+		"Cargo.toml": "[package]\nname='demo'\nedition='2021'\n",
+		"src/lib.rs": `#[cfg(test)]
+#[path = "fixtures/support.rs"]
+mod only;
+#[cfg(test)]
+#[path = "shared.rs"]
+mod for_tests;
+mod shared;
+#[path = "fixtures/worker.rs"]
+mod worker;
+fn execute() { worker::run(); }
+`,
+		"src/fixtures/support.rs": `use crate::worker; fn check() { worker::run(); }`,
+		"src/fixtures/worker.rs":  `pub fn run() {}`,
+		"src/shared.rs":           `use crate::worker;`,
+	} {
+		target := filepath.Join(root, file)
+		if err := os.MkdirAll(filepath.Dir(target), 0755); err != nil {
+			t.Fatal(err)
+		}
+		if err := os.WriteFile(target, []byte(data), 0600); err != nil {
+			t.Fatal(err)
+		}
+	}
+	report, err := Scan(context.Background(), root, []string{"files", "call-graph"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	imports := report["files"].(map[string]any)["imports"].([]Import)
+	if len(imports) != 2 || imports[0].TestContext == nil || imports[0].TestContext.Evidence[0].File != "src/lib.rs" || imports[1].TestContext != nil {
+		t.Fatalf("unexpected test propagation: %+v", imports)
+	}
+	calls := report["call-graph"].(*callGraph).Calls
+	if len(calls) != 2 || calls[0].TestContext == nil || calls[1].Resolution != "resolved" {
+		t.Fatalf("unexpected call evidence: %+v", calls)
+	}
+}

@@ -2,6 +2,7 @@ package rust
 
 import (
 	"context"
+	"encoding/json"
 	"fmt"
 	"io/fs"
 	"os"
@@ -21,16 +22,17 @@ type Location struct {
 
 type Module struct {
 	Location
-	ID           string       `json:"moduleId"`
-	Name         string       `json:"name"`
-	ParentID     string       `json:"parentModuleId,omitempty"`
-	TargetFile   string       `json:"targetFile,omitempty"`
-	Resolution   string       `json:"resolution"`
-	Candidates   []string     `json:"candidates,omitempty"`
-	ComponentIDs []string     `json:"componentIds,omitempty"`
-	Attributes   []string     `json:"attributes,omitempty"`
-	TestContext  *TestContext `json:"testContext,omitempty"`
-	visibility   string
+	ID               string       `json:"moduleId"`
+	Name             string       `json:"name"`
+	ParentID         string       `json:"parentModuleId,omitempty"`
+	TargetFile       string       `json:"targetFile,omitempty"`
+	Resolution       string       `json:"resolution"`
+	Candidates       []string     `json:"candidates,omitempty"`
+	ResolutionReason string       `json:"resolutionReason,omitempty"`
+	ComponentIDs     []string     `json:"componentIds,omitempty"`
+	Attributes       []string     `json:"attributes,omitempty"`
+	TestContext      *TestContext `json:"testContext,omitempty"`
+	visibility       string
 }
 
 type Import struct {
@@ -103,7 +105,7 @@ func Scan(ctx context.Context, root string, selected []string, observers ...Sour
 	architecture := slices.Contains(selected, "architecture")
 	files := slices.Contains(selected, "files")
 	if slices.Contains(selected, "call-graph") {
-		s.graph = &callGraph{ProjectID: root, Basis: "tree-sitter-syntax", Symbols: []functionSymbol{}, Calls: []callSite{}, blockers: map[moduleKey]map[string]bool{}}
+		s.graph = &callGraph{ProjectID: root, Basis: "tree-sitter-syntax", Limitations: []string{"type-directed-dispatch", "registry-and-git-crate-symbols", "macro-expansion", "active-cargo-features"}, Symbols: []functionSymbol{}, Calls: []callSite{}, blockers: map[moduleKey]map[string]bool{}}
 	}
 	collect := architecture || files || s.graph != nil
 	if !collect && len(observers) == 0 {
@@ -117,9 +119,10 @@ func Scan(ctx context.Context, root string, selected []string, observers ...Sour
 	}
 	if collect {
 		s.attachComponents(targets)
+		s.inheritExternalTestContexts(targets)
 	}
 	if s.graph != nil {
-		if err := s.graph.resolve(ctx, targets, s.modules); err != nil {
+		if err := s.graph.resolve(ctx, targets, s.modules, manifests); err != nil {
 			return nil, err
 		}
 		facts["call-graph"] = s.graph
@@ -221,7 +224,7 @@ func (s *scanner) collect(ctx context.Context, node *sitter.Node, file, moduleDi
 					return err
 				}
 			} else {
-				s.resolveModule(&module, moduleDir)
+				s.resolveModule(&module, moduleDir, attributes, source)
 				s.modules = append(s.modules, module)
 			}
 		case "use_declaration":
@@ -254,14 +257,42 @@ func (s *scanner) collect(ctx context.Context, node *sitter.Node, file, moduleDi
 	return nil
 }
 
-func (s *scanner) resolveModule(module *Module, moduleDir string) {
+func (s *scanner) resolveModule(module *Module, moduleDir string, attrs []sourceAttribute, source []byte) {
 	module.Resolution = "unresolved"
-	for _, attr := range module.Attributes {
-		compact := strings.Join(strings.Fields(attr), "")
-		if strings.HasPrefix(compact, "#[path=") || strings.HasPrefix(compact, "#[cfg_attr(") {
+	var explicit string
+	for _, attr := range attrs {
+		node := attr.node.NamedChild(0)
+		if node == nil || node.NamedChildCount() == 0 {
+			continue
+		}
+		switch node.NamedChild(0).Utf8Text(source) {
+		case "cfg_attr":
+			module.ResolutionReason = "conditional-module-path"
 			return
+		case "path":
+			value := node.ChildByFieldName("value")
+			if value == nil || value.Kind() != "string_literal" || explicit != "" ||
+				json.Unmarshal([]byte(value.Utf8Text(source)), &explicit) != nil || explicit == "" ||
+				path.IsAbs(explicit) || strings.Contains(explicit, "\\") {
+				module.ResolutionReason = "unsupported-module-path"
+				return
+			}
 		}
 	}
+	if explicit != "" {
+		base := path.Dir(module.File)
+		if module.ParentID != "" {
+			base = moduleDir
+		}
+		candidate := path.Join(base, explicit)
+		if !s.sourcePaths[candidate] {
+			module.ResolutionReason = "module-file-not-found"
+			return
+		}
+		module.TargetFile, module.Resolution = candidate, "resolved"
+		return
+	}
+
 	for _, candidate := range []string{
 		path.Join(moduleDir, module.Name+".rs"), path.Join(moduleDir, module.Name, "mod.rs"),
 	} {
@@ -273,7 +304,9 @@ func (s *scanner) resolveModule(module *Module, moduleDir string) {
 	case 1:
 		module.TargetFile, module.Resolution, module.Candidates = module.Candidates[0], "resolved", nil
 	case 2:
-		module.Resolution = "ambiguous"
+		module.Resolution, module.ResolutionReason = "ambiguous", "multiple-module-files"
+	default:
+		module.ResolutionReason = "module-file-not-found"
 	}
 }
 
