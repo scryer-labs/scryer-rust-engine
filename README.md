@@ -23,6 +23,9 @@ scryer project scan /path/to/project --facts dependencies,architecture,files --j
   external module files are joined when exactly one candidate exists.
 - `files` lists Rust files, their component IDs, module references, and syntactic
   `use` expressions.
+- `call-graph` records functions, closures and syntactic call sites. It can
+  link a binary root's direct call to a public library-root function in the
+  same Cargo package. Other call targets stay unresolved.
 
 The scan reads the checkout directly. Cargo dependency resolution, macro expansion,
 conditional compilation, custom module paths, and Rust semantic resolution are

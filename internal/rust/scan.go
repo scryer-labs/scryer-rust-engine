@@ -47,6 +47,7 @@ type SourceFile struct {
 }
 
 type scanner struct {
+	graph       *callGraph
 	files       []SourceFile
 	modules     []Module
 	imports     []Import
@@ -100,17 +101,25 @@ func Scan(ctx context.Context, root string, selected []string, observers ...Sour
 	}
 	architecture := slices.Contains(selected, "architecture")
 	files := slices.Contains(selected, "files")
-	if !architecture && !files && len(observers) == 0 {
+	if slices.Contains(selected, "call-graph") {
+		s.graph = &callGraph{ProjectID: root, Basis: "tree-sitter-syntax", Symbols: []functionSymbol{}, Calls: []callSite{}}
+	}
+	collect := architecture || files || s.graph != nil
+	if !collect && len(observers) == 0 {
 		return facts, nil
 	}
 	for _, target := range targets {
 		s.targetRoots[target.File] = true
 	}
-	if err := s.scanSources(ctx, fsys, architecture || files, observers); err != nil {
+	if err := s.scanSources(ctx, fsys, collect, observers); err != nil {
 		return nil, err
 	}
-	if architecture || files {
+	if collect {
 		s.attachComponents(targets)
+	}
+	if s.graph != nil {
+		s.graph.resolve(targets, s.files, s.imports, s.modules)
+		facts["call-graph"] = s.graph
 	}
 	if architecture {
 		facts["architecture"] = map[string]any{
@@ -154,7 +163,7 @@ func (s *scanner) scanSources(ctx context.Context, fsys fs.FS, collect bool, obs
 			dir = strings.TrimSuffix(entry.Path, ".rs")
 		}
 		if collect {
-			err = s.collect(ctx, root, entry.Path, dir, "", nil, source)
+			err = s.collect(ctx, root, entry.Path, dir, "", "", nil, source)
 		}
 		for _, observe := range observers {
 			if err != nil {
@@ -170,7 +179,7 @@ func (s *scanner) scanSources(ctx context.Context, fsys fs.FS, collect bool, obs
 	return nil
 }
 
-func (s *scanner) collect(ctx context.Context, node *sitter.Node, file, moduleDir, parent string, inherited *TestContext, source []byte) error {
+func (s *scanner) collect(ctx context.Context, node *sitter.Node, file, moduleDir, parent, caller string, inherited *TestContext, source []byte) error {
 	if err := ctx.Err(); err != nil {
 		return err
 	}
@@ -201,7 +210,7 @@ func (s *scanner) collect(ctx context.Context, node *sitter.Node, file, moduleDi
 			if body := child.ChildByFieldName("body"); body != nil {
 				module.TargetFile, module.Resolution = file, "inline"
 				s.modules = append(s.modules, module)
-				if err := s.collect(ctx, body, file, path.Join(moduleDir, module.Name), module.ID, scope, source); err != nil {
+				if err := s.collect(ctx, body, file, path.Join(moduleDir, module.Name), module.ID, "", scope, source); err != nil {
 					return err
 				}
 			} else {
@@ -215,9 +224,18 @@ func (s *scanner) collect(ctx context.Context, node *sitter.Node, file, moduleDi
 		case "inner_attribute_item", "token_tree":
 			// Attribute predicates and unexpanded macro tokens are not source references.
 		default:
+			nestedCaller := caller
+			if s.graph != nil {
+				switch child.Kind() {
+				case "function_item", "closure_expression":
+					nestedCaller = s.graph.symbol(file, child, scope, attributes, source)
+				case "call_expression":
+					s.graph.call(file, caller, child, scope, source)
+				}
+			}
 			if value := explicitCratePath(child, source); value != "" {
 				s.references = append(s.references, Reference{loc, value, parent, scope})
-			} else if err := s.collect(ctx, child, file, moduleDir, parent, scope, source); err != nil {
+			} else if err := s.collect(ctx, child, file, moduleDir, parent, nestedCaller, scope, source); err != nil {
 				return err
 			}
 		}
