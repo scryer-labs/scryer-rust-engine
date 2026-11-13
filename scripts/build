@@ -20,7 +20,7 @@ cat > "$package/engine.json" <<MANIFEST
   "capabilities": {
     "languages": ["Rust"],
     "operations": ["scan"],
-    "scanFacts": ["dependencies", "architecture", "files"]
+    "scanFacts": ["dependencies", "architecture", "files", "ipc"]
   },
   "library": "bin/libscryer-rust-engine.dylib",
   "os": "darwin",

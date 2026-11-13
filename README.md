@@ -26,5 +26,11 @@ scryer project scan /path/to/project --facts dependencies,architecture,files --j
 
 The scan reads the checkout directly. Cargo dependency resolution, macro expansion,
 conditional compilation, custom module paths, and Rust semantic resolution are
-outside this slice. Tauri recognition will build on the Rust scanner in a separate
-module.
+outside this slice.
+
+## Tauri IPC
+
+`--facts ipc` reports Rust-side Tauri command declarations, registrations,
+and literal event emissions. The collector lives in `internal/framework/tauri`
+and consumes the syntax trees produced by the generic Rust scanner. The
+result is source evidence grouped by Tauri config path.

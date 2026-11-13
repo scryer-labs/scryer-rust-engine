@@ -6,7 +6,9 @@ import (
 	"errors"
 	"os"
 	"path/filepath"
+	"slices"
 
+	"github.com/scryer-labs/scryer-rust-engine/internal/framework/tauri"
 	"github.com/scryer-labs/scryer-rust-engine/internal/rust"
 )
 
@@ -70,7 +72,7 @@ func (r Request) scan(ctx context.Context) (*report, *protocolError) {
 		selected = []string{"dependencies"}
 	}
 	for _, fact := range selected {
-		if fact != "dependencies" && fact != "architecture" && fact != "files" {
+		if fact != "dependencies" && fact != "architecture" && fact != "files" && fact != "ipc" {
 			return nil, &protocolError{"UNSUPPORTED_FACT", "Rust engine does not support " + fact}
 		}
 	}
@@ -81,9 +83,18 @@ func (r Request) scan(ctx context.Context) (*report, *protocolError) {
 	if info, err := os.Stat(root); err != nil || !info.IsDir() {
 		return nil, &protocolError{"INVALID_REQUEST", "scan repository must be an existing directory"}
 	}
-	result, err := rust.Scan(ctx, root, selected)
+	var framework *tauri.Collector
+	var observers []rust.SourceObserver
+	if slices.Contains(selected, "ipc") {
+		framework = tauri.New(os.DirFS(root))
+		observers = append(observers, framework.Observe)
+	}
+	result, err := rust.Scan(ctx, root, selected, observers...)
 	if err != nil {
 		return nil, &protocolError{"RUST_SCAN_ERROR", err.Error()}
+	}
+	if framework != nil {
+		result["ipc"] = framework.Facts()
 	}
 	return &report{1, root, result}, nil
 }

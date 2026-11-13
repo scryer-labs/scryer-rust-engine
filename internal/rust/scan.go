@@ -55,7 +55,10 @@ type scanner struct {
 	targetRoots map[string]bool
 }
 
-func Scan(ctx context.Context, root string, selected []string) (map[string]any, error) {
+// SourceObserver sees each parsed source file while its syntax tree is valid.
+type SourceObserver func(context.Context, string, *sitter.Node, []byte) error
+
+func Scan(ctx context.Context, root string, selected []string, observers ...SourceObserver) (map[string]any, error) {
 	fsys := os.DirFS(root)
 	manifests := []Manifest{}
 	targets := []Target{}
@@ -97,16 +100,18 @@ func Scan(ctx context.Context, root string, selected []string) (map[string]any, 
 	}
 	architecture := slices.Contains(selected, "architecture")
 	files := slices.Contains(selected, "files")
-	if !architecture && !files {
+	if !architecture && !files && len(observers) == 0 {
 		return facts, nil
 	}
 	for _, target := range targets {
 		s.targetRoots[target.File] = true
 	}
-	if err := s.scanSources(ctx, fsys); err != nil {
+	if err := s.scanSources(ctx, fsys, architecture || files, observers); err != nil {
 		return nil, err
 	}
-	s.attachComponents(targets)
+	if architecture || files {
+		s.attachComponents(targets)
+	}
 	if architecture {
 		facts["architecture"] = map[string]any{
 			"projectId": root, "basis": "cargo-and-rust-declarations", "components": targets, "modules": s.modules,
@@ -118,7 +123,7 @@ func Scan(ctx context.Context, root string, selected []string) (map[string]any, 
 	return facts, nil
 }
 
-func (s *scanner) scanSources(ctx context.Context, fsys fs.FS) error {
+func (s *scanner) scanSources(ctx context.Context, fsys fs.FS, collect bool, observers []SourceObserver) error {
 	parser := sitter.NewParser()
 	defer parser.Close()
 	if err := parser.SetLanguage(sitter.NewLanguage(grammar.Language())); err != nil {
@@ -148,7 +153,15 @@ func (s *scanner) scanSources(ctx context.Context, fsys fs.FS) error {
 		if !s.targetRoots[entry.Path] && path.Base(entry.Path) != "mod.rs" {
 			dir = strings.TrimSuffix(entry.Path, ".rs")
 		}
-		err = s.collect(ctx, root, entry.Path, dir, "", nil, source)
+		if collect {
+			err = s.collect(ctx, root, entry.Path, dir, "", nil, source)
+		}
+		for _, observe := range observers {
+			if err != nil {
+				break
+			}
+			err = observe(ctx, entry.Path, root, source)
+		}
 		tree.Close()
 		if err != nil {
 			return err
