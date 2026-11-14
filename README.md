@@ -6,15 +6,26 @@ A Scryer language engine for Rust projects.
 
 [Apache License 2.0](LICENSE)
 
-## Static Rust scan
+## Install and scan
 
-Build a local macOS package with Go and cgo, then install it into Scryer:
+With a current Scryer CLI, install or upgrade the official macOS arm64 or
+Windows amd64 package:
+
+```sh
+scryer engine install rust
+scryer engine upgrade rust
+scryer project scan /path/to/project --facts dependencies,architecture,files,call-graph,ipc --json --compact
+```
+
+For engine development, build with the Go version in `go.mod`, cgo and a C
+compiler. Install the resulting local package into Scryer:
 
 ```sh
 ./scripts/build
 scryer engine install rust --from "$PWD/build/install/scryer-rust-engine"
-scryer project scan /path/to/project --facts dependencies,architecture,files --json
 ```
+
+## Static facts
 
 - `dependencies` lists Cargo manifests, declared dependencies and workspace member
   patterns. It preserves dependency tables, scopes, version requirements and target
@@ -61,3 +72,8 @@ under `dependencies.resolution`. It uses `cargo metadata --frozen` for the
 host target, without downloading packages or updating the lockfile. The
 declared dependency facts remain available for manifests that cannot be
 resolved offline. Rust symbol and method resolution remain source-based.
+
+## Release verification
+
+The [GitHub workflow](.github/workflows/ci.yml) builds the platform packages
+and exercises a scan through the ABI before publishing a version tag.
