@@ -55,3 +55,9 @@ It recognizes directly chained `ClientOptions::new().open(...)` and
 and local pipe names from literals or unique constants in source scope.
 It records the source locations and normalizes access modes for the same
 Core matcher used by C++. It does not build or run the target.
+
+`--facts dependencies --resolve` adds Cargo's effective dependency graph
+under `dependencies.resolution`. It uses `cargo metadata --frozen` for the
+host target, without downloading packages or updating the lockfile. The
+declared dependency facts remain available for manifests that cannot be
+resolved offline. Rust symbol and method resolution remain source-based.
