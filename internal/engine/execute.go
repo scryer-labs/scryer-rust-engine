@@ -99,6 +99,10 @@ func (r Request) scan(ctx context.Context) (*report, *protocolError) {
 	if err != nil {
 		return nil, &protocolError{"RUST_SCAN_ERROR", err.Error()}
 	}
+	if r.Scan.Static != nil && !*r.Scan.Static && slices.Contains(selected, "dependencies") {
+		dependencies := result["dependencies"].(map[string]any)
+		dependencies["resolution"] = rust.ResolveDependencies(ctx, root, dependencies["manifests"].([]rust.Manifest))
+	}
 	if framework != nil {
 		architecture := result["architecture"].(map[string]any)
 		framework.ResolveRegistrations(architecture["modules"].([]rust.Module), architecture["components"].([]rust.Target))
