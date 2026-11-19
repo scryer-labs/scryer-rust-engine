@@ -71,7 +71,10 @@ Core matcher used by C++. It does not build or run the target.
 under `dependencies.resolution`. It uses `cargo metadata --frozen` for the
 host target, without downloading packages or updating the lockfile. The
 declared dependency facts remain available for manifests that cannot be
-resolved offline. Rust symbol and method resolution remain source-based.
+resolved offline. `--facts files,call-graph --resolve` also runs
+`cargo check --frozen --tests` with a temporary target directory. It validates
+build selection without executing tests and records `basis: "cargo-check"` and
+`bindingBasis: "source-candidates"`. Rust symbol and method resolution remain source-based.
 
 ## Coverage and change impact
 
