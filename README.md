@@ -106,6 +106,19 @@ Coverage is aggregate execution evidence, not assertion effectiveness or a
 causal test-to-caller path. The common JSON contract is maintained in Scryer
 Core's `docs/contracts/COVERAGE.md` and `docs/contracts/IMPACT.md`.
 
+## Known gaps
+
+- Cargo validation is not rustc semantic binding. Trait/dynamic dispatch,
+  macro expansion, registry/Git-crate targets and generated or inactive cfg code
+  can remain unresolved or source candidates.
+- Named-pipe detection currently covers the documented direct Tokio patterns;
+  arbitrary wrappers, dynamic channel values and shared-memory APIs are not
+  implemented. Tauri has the registration/data-flow limits described above.
+- Runtime coverage excludes doctests and individual-test attribution. Test
+  effectiveness, code-smell rules and ownership/lifetime analysis are not implemented.
+- Custom feature/target selection and full Windows runtime acceptance need
+  further work; package availability does not imply those capabilities.
+
 ## Release verification
 
 The [GitHub workflow](.github/workflows/ci.yml) builds the platform packages
