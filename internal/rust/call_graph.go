@@ -3,6 +3,7 @@ package rust
 import (
 	"fmt"
 
+	"github.com/scryer-labs/scryer-rust-engine/internal/analysis"
 	sitter "github.com/tree-sitter/go-tree-sitter"
 )
 
@@ -18,17 +19,18 @@ type sourceRange struct {
 }
 
 type functionSymbol struct {
-	ID             string       `json:"symbolId"`
-	Name           string       `json:"name,omitempty"`
-	Kind           string       `json:"kind"`
-	Definition     sourceRange  `json:"definition"`
-	TestContext    *TestContext `json:"testContext,omitempty"`
-	module         string
-	moduleFunction bool
-	visibility     string
-	conditional    bool
-	implID         string
-	receiver       bool
+	impactKey, impactSignature, impactFingerprint, impactSource string
+	ID                                                          string       `json:"symbolId"`
+	Name                                                        string       `json:"name,omitempty"`
+	Kind                                                        string       `json:"kind"`
+	Definition                                                  sourceRange  `json:"definition"`
+	TestContext                                                 *TestContext `json:"testContext,omitempty"`
+	module                                                      string
+	moduleFunction                                              bool
+	visibility                                                  string
+	conditional                                                 bool
+	implID                                                      string
+	receiver                                                    bool
 }
 
 type callSite struct {
@@ -49,6 +51,8 @@ type callSite struct {
 }
 
 type callGraph struct {
+	Semantic    any `json:"semantic,omitempty"`
+	contexts    []analysis.ImpactContext
 	imports     []callImport
 	blockers    map[moduleKey]map[string]bool
 	ProjectID   string           `json:"projectId"`
@@ -86,6 +90,7 @@ func (g *callGraph) symbol(file, module string, node *sitter.Node, scope *TestCo
 			}
 		}
 	}
+	symbol.impactKey, symbol.impactSignature, symbol.impactFingerprint, symbol.impactSource = impactIdentity(file, node, source)
 	g.Symbols = append(g.Symbols, symbol)
 	return symbol.ID
 }

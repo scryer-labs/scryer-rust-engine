@@ -73,7 +73,37 @@ host target, without downloading packages or updating the lockfile. The
 declared dependency facts remain available for manifests that cannot be
 resolved offline. Rust symbol and method resolution remain source-based.
 
+## Coverage and change impact
+
+With a current Core CLI and this engine:
+
+```sh
+scryer project analyze --operations coverage -o coverage.html
+scryer project analyze --resolve --operations impact,coverage -o impact.html
+scryer project analyze --json --compact
+```
+
+Impact defaults to static scan evidence; `--resolve` also runs native tests and
+collects after-snapshot coverage. Failed dynamic resolution/tests/coverage stop
+analysis without static fallback. Core owns snapshot comparison, traversal and
+report rendering; the engine supplies shared scan projections and normalized
+JSON coverage. Multi-engine projects use the same command; CMake target selectors
+belong to C++ and are not interpreted here.
+
+Requires Cargo/rustc, a frozen dependency set and LLVM coverage tools matching
+rustc's LLVM major. `SCRYER_RUST_LLVM_BIN` selects their directory. Cargo tests
+run with coverage instrumentation and temporary target/profile directories;
+LLVM JSON imports are also accepted. Doctests and per-test attribution are not
+collected. Impact reuses scan's source graph; `--resolve` adds Cargo check for
+both snapshots, not rustc type-directed binding. Candidate edges remain explicit.
+
+Native runtime acceptance currently targets macOS. Windows package builds and
+ABI smoke checks do not establish equivalent runtime toolchain acceptance.
+Coverage is aggregate execution evidence, not assertion effectiveness or a
+causal test-to-caller path. The common JSON contract is maintained in Scryer
+Core's `docs/contracts/COVERAGE.md` and `docs/contracts/IMPACT.md`.
+
 ## Release verification
 
 The [GitHub workflow](.github/workflows/ci.yml) builds the platform packages
-and exercises a scan through the ABI before publishing a version tag.
+and exercises scan, static impact and coverage import through the ABI before publishing a version tag.

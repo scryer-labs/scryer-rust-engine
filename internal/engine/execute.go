@@ -8,6 +8,7 @@ import (
 	"path/filepath"
 	"slices"
 
+	"github.com/scryer-labs/scryer-rust-engine/internal/analysis"
 	"github.com/scryer-labs/scryer-rust-engine/internal/framework/tauri"
 	"github.com/scryer-labs/scryer-rust-engine/internal/ipc/windows/namedpipe"
 	"github.com/scryer-labs/scryer-rust-engine/internal/rust"
@@ -19,11 +20,16 @@ const (
 )
 
 type Request struct {
-	ProtocolVersion int    `json:"protocolVersion"`
-	ID              string `json:"requestId"`
-	Stack           string `json:"stack"`
-	Operation       string `json:"operation"`
-	Scan            struct {
+	ProtocolVersion int                      `json:"protocolVersion"`
+	ID              string                   `json:"requestId"`
+	Stack           string                   `json:"stack"`
+	Operation       string                   `json:"operation"`
+	Coverage        analysis.CoverageRequest `json:"coverage"`
+	Impact          struct {
+		Before, After, BeforeRoot, AfterRoot string
+		Resolve                              bool
+	} `json:"impact"`
+	Scan struct {
 		Repository string   `json:"repository"`
 		Static     *bool    `json:"static"`
 		Facts      []string `json:"facts"`
@@ -50,13 +56,43 @@ type report struct {
 }
 
 func (r Request) Execute(ctx context.Context) ([]byte, error) {
-	result, failure := r.scan(ctx)
+	var result any
+	var failure *protocolError
+	if r.ProtocolVersion != 1 || r.Stack != "rust" {
+		failure = &protocolError{"INVALID_REQUEST", "unsupported protocol version or stack"}
+	} else {
+		switch r.Operation {
+		case "scan":
+			result, failure = r.scan(ctx)
+		case "coverage":
+			value, err := rust.Coverage(ctx, r.Coverage)
+			if err != nil {
+				failure = &protocolError{"RUST_COVERAGE_ERROR", err.Error()}
+			} else {
+				result = value
+			}
+		case "impact":
+			before, err := rust.Impact(ctx, r.Impact.BeforeRoot, r.Impact.Resolve)
+			if err != nil {
+				failure = &protocolError{"RUST_IMPACT_ERROR", "before: " + err.Error()}
+				break
+			}
+			after, err := rust.Impact(ctx, r.Impact.AfterRoot, r.Impact.Resolve)
+			if err != nil {
+				failure = &protocolError{"RUST_IMPACT_ERROR", "after: " + err.Error()}
+				break
+			}
+			result = analysis.ImpactFacts{SchemaVersion: 1, BeforeSHA: r.Impact.Before, AfterSHA: r.Impact.After, Before: before, After: after}
+		default:
+			failure = &protocolError{"UNSUPPORTED_OPERATION", "Rust engine does not support operation " + r.Operation}
+		}
+	}
 	return json.Marshal(struct {
 		ProtocolVersion int            `json:"protocolVersion"`
 		ID              string         `json:"requestId"`
 		Stack           string         `json:"stack"`
 		Operation       string         `json:"operation"`
-		Report          *report        `json:"report"`
+		Report          any            `json:"report"`
 		Error           *protocolError `json:"error"`
 	}{1, r.ID, "rust", r.Operation, result, failure})
 }
@@ -95,6 +131,10 @@ func (r Request) scan(ctx context.Context) (*report, *protocolError) {
 	if framework != nil && !slices.Contains(selected, "architecture") {
 		scanFacts = append(slices.Clone(selected), "architecture")
 	}
+	resolveGraph := r.Scan.Static != nil && !*r.Scan.Static && (slices.Contains(selected, "call-graph") || slices.Contains(selected, "files"))
+	if resolveGraph && !slices.Contains(scanFacts, "dependencies") {
+		scanFacts = append(slices.Clone(scanFacts), "dependencies")
+	}
 	result, err := rust.Scan(ctx, root, scanFacts, observers...)
 	if err != nil {
 		return nil, &protocolError{"RUST_SCAN_ERROR", err.Error()}
@@ -102,6 +142,12 @@ func (r Request) scan(ctx context.Context) (*report, *protocolError) {
 	if r.Scan.Static != nil && !*r.Scan.Static && slices.Contains(selected, "dependencies") {
 		dependencies := result["dependencies"].(map[string]any)
 		dependencies["resolution"] = rust.ResolveDependencies(ctx, root, dependencies["manifests"].([]rust.Manifest))
+	}
+	if resolveGraph {
+		rust.ResolveGraph(ctx, root, result)
+		if !slices.Contains(selected, "dependencies") {
+			delete(result, "dependencies")
+		}
 	}
 	if framework != nil {
 		architecture := result["architecture"].(map[string]any)

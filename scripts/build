@@ -26,8 +26,8 @@ cat > "$package/engine.json" <<MANIFEST
   },
   "capabilities": {
     "languages": ["Rust"],
-    "operations": ["scan"],
-    "resolveFacts": ["dependencies"],
+    "operations": ["scan", "coverage", "impact"],
+    "resolveFacts": ["dependencies", "files", "call-graph"],
     "scanFacts": ["dependencies", "architecture", "files", "ipc", "call-graph"]
   },
   "library": "bin/$library",

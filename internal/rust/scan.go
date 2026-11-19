@@ -10,6 +10,7 @@ import (
 	"slices"
 	"strings"
 
+	"github.com/scryer-labs/scryer-rust-engine/internal/analysis"
 	sitter "github.com/tree-sitter/go-tree-sitter"
 	grammar "github.com/tree-sitter/tree-sitter-rust/bindings/go"
 )
@@ -176,6 +177,9 @@ func (s *scanner) scanSources(ctx context.Context, fsys fs.FS, collect bool, obs
 				break
 			}
 			err = observe(ctx, entry.Path, root, source)
+		}
+		if s.graph != nil {
+			s.graph.contexts = append(s.graph.contexts, analysis.ImpactContext{Path: entry.Path, Fingerprint: analysis.Hash([]byte(tokens(root, source, true)))})
 		}
 		tree.Close()
 		if err != nil {
