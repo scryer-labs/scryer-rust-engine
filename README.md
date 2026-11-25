@@ -123,3 +123,8 @@ Core's `docs/contracts/COVERAGE.md` and `docs/contracts/IMPACT.md`.
 
 The [GitHub workflow](.github/workflows/ci.yml) builds the platform packages
 and exercises scan, static impact and coverage import through the ABI before publishing a version tag.
+
+## Contributor workflow
+
+Start with [AGENTS.md](AGENTS.md) and [working conventions](docs/WORKING-NOTES.md)
+for repository-specific analysis, coding, independent review and Orrery acceptance.
