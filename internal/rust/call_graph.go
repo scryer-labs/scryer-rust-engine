@@ -29,30 +29,33 @@ type functionSymbol struct {
 	moduleFunction                                              bool
 	visibility                                                  string
 	conditional                                                 bool
+	implType, implTrait                                         string
 	implID                                                      string
 	receiver                                                    bool
 }
 
 type callSite struct {
-	ID          string       `json:"callSiteId"`
-	CallerID    string       `json:"callerSymbolId,omitempty"`
-	Callee      string       `json:"callee"`
-	Resolution  string       `json:"resolution"`
-	Reason      string       `json:"resolutionReason,omitempty"`
-	TargetID    string       `json:"targetSymbolId,omitempty"`
-	Site        sourceRange  `json:"site"`
-	TestContext *TestContext `json:"testContext,omitempty"`
-	directPath  string
-	module      string
-	shadowed    bool
-	implID      string
-	method      string
-	receiver    bool
+	ID                          string       `json:"callSiteId"`
+	CallerID                    string       `json:"callerSymbolId,omitempty"`
+	Callee                      string       `json:"callee"`
+	Resolution                  string       `json:"resolution"`
+	Reason                      string       `json:"resolutionReason,omitempty"`
+	TargetID                    string       `json:"targetSymbolId,omitempty"`
+	Site                        sourceRange  `json:"site"`
+	TestContext                 *TestContext `json:"testContext,omitempty"`
+	receiverType, receiverTrait string
+	directPath                  string
+	module                      string
+	shadowed                    bool
+	implID                      string
+	method                      string
+	receiver                    bool
 }
 
 type callGraph struct {
 	Semantic    any `json:"semantic,omitempty"`
 	contexts    []analysis.ImpactContext
+	localTypes  map[moduleKey]map[string]typeEvidence
 	imports     []callImport
 	blockers    map[moduleKey]map[string]bool
 	ProjectID   string           `json:"projectId"`
@@ -83,6 +86,9 @@ func (g *callGraph) symbol(file, module string, node *sitter.Node, scope *TestCo
 		symbol.moduleFunction = parent.Kind() == "source_file" || parent.Kind() == "declaration_list" && container != nil && container.Kind() == "mod_item"
 		symbol.visibility = itemVisibility(node, source)
 		symbol.conditional = guarded(attributes)
+		if impl := parent.Parent(); impl != nil && impl.Kind() == "impl_item" {
+			symbol.implType, symbol.implTrait, symbol.conditional = sourceImpl(impl, symbol.conditional, source)
+		}
 		if impl := parent.Parent(); impl != nil && impl.Kind() == "impl_item" && enclosingInherentImpl(node) != nil {
 			symbol.implID = fmt.Sprintf("%s:%d", file, impl.StartByte())
 			if params := node.ChildByFieldName("parameters"); params != nil && params.NamedChildCount() > 0 {
@@ -112,6 +118,15 @@ func (g *callGraph) call(file, caller, module string, node *sitter.Node, scope *
 		if impl := enclosingInherentImpl(node); impl != nil {
 			site.implID = fmt.Sprintf("%s:%d", file, impl.StartByte())
 			site.method, site.receiver = method, receiver
+		}
+	}
+	site.receiverType, site.receiverTrait = explicitReceiverType(node, callee, source)
+	if site.receiverType != "" {
+		if field := callee.ChildByFieldName("field"); field != nil {
+			site.method = field.Utf8Text(source)
+			site.receiver = true
+		} else if name := callee.ChildByFieldName("name"); name != nil {
+			site.method = name.Utf8Text(source)
 		}
 	}
 	if callee != nil && !callee.HasError() && (callee.Kind() == "identifier" || callee.Kind() == "scoped_identifier") {

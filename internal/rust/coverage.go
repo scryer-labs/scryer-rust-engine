@@ -10,11 +10,19 @@ import (
 	"os/exec"
 	"path/filepath"
 	"regexp"
+	"runtime"
 	"strings"
 	"time"
 
 	"github.com/scryer-labs/scryer-rust-engine/internal/analysis"
 )
+
+func llvmExecutable(directory, name, goos string) string {
+	if goos == "windows" {
+		name += ".exe"
+	}
+	return filepath.Join(directory, name)
+}
 
 func rustLLVM(ctx context.Context, root string) (string, string, error) {
 	version, err := analysis.Command(ctx, root, nil, "rustc", "-vV")
@@ -41,7 +49,7 @@ func rustLLVM(ctx context.Context, root string) (string, string, error) {
 		if directory == "" {
 			continue
 		}
-		cov, prof := filepath.Join(directory, "llvm-cov"), filepath.Join(directory, "llvm-profdata")
+		cov, prof := llvmExecutable(directory, "llvm-cov", runtime.GOOS), llvmExecutable(directory, "llvm-profdata", runtime.GOOS)
 		output, err := analysis.Command(ctx, root, nil, cov, "--version")
 		if err != nil {
 			continue

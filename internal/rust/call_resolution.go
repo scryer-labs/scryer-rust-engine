@@ -142,6 +142,7 @@ func (g *callGraph) resolve(ctx context.Context, targets []Target, modules []Mod
 		}
 	}
 	g.resolveInherentCalls()
+	g.resolveTypedCalls(index)
 	return nil
 }
 

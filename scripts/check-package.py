@@ -72,3 +72,21 @@ with tempfile.TemporaryDirectory() as directory:
     artifact.write_text(json.dumps({"type":"llvm.coverage.json.export","version":"2.0.1","data":[{"files":[{"filename":str(source),"summary":summary,"segments":[[1,1,1,True,True,False],[1,25,0,False,False,False]]}]}]}))
     coverage = execute({"operation":"coverage","coverage":{"repository":str(root),"artifact":str(artifact)}})
     assert coverage["status"] == "collected" and coverage["coverage"]["files"], coverage
+
+
+# Exercise closure correspondence through the real packaged ABI on both hosts.
+with tempfile.TemporaryDirectory() as directory:
+    root = Path(directory).resolve() / "space 项目"
+    before, after = root / "before", root / "after"
+    before.mkdir(parents=True)
+    after.mkdir()
+    original = "fn target() {}\nfn run() { let callback = || { target(); }; }\n"
+    (before / "source.rs").write_bytes(original.encode())
+    (after / "source.rs").write_bytes(("// shifted\r\n" + original.replace("\n", "\r\n").replace("target();", "target(); target();")).encode())
+    report = execute({"operation": "impact", "impact": {"before": "a" * 40, "after": "b" * 40, "beforeRoot": str(before), "afterRoot": str(after), "resolve": False}})
+    left = [item for item in report["before"]["symbols"] if "::closure[" in item["signature"]]
+    right = [item for item in report["after"]["symbols"] if "::closure[" in item["signature"]]
+    assert len(left) == len(right) == 1, report
+    assert left[0]["key"] == right[0]["key"] and left[0]["fingerprint"] != right[0]["fingerprint"], report
+    calls = [item for item in report["after"]["calls"] if item["callerSymbolId"] == right[0]["id"]]
+    assert len(calls) == 2 and all(item["kind"] == "source-candidate" for item in calls), report

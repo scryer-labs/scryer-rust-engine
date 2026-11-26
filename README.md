@@ -39,7 +39,12 @@ scryer engine install rust --from "$PWD/build/install/scryer-rust-engine"
   resolve direct module-level functions, explicit module paths and supported
   aliases, public functions in the same Cargo package library or explicit
   unconditional local path dependencies, and `self`/`Self` calls within the same
-  inherent implementation. Calls without sufficient evidence keep their source
+  inherent implementation. Explicitly typed local receiver parameters/bindings can
+  identify a unique unconditional, nongeneric inherent method in the same source
+  module. Explicit `<LocalType as LocalTrait>::method` references can identify a
+  unique unconditional local implementation. These remain source candidates;
+  inferred receivers, trait method selection, imported/re-exported type aliases,
+  generic types and conditional implementations remain boundaries. Calls without sufficient evidence keep their source
   location, `unresolved` status and `resolutionReason`.
 
 The scan reads the checkout directly. Call graphs declare limitations such as
@@ -87,8 +92,9 @@ scryer project analyze --json --compact
 ```
 
 Impact defaults to static scan evidence; `--resolve` also runs native tests and
-collects after-snapshot coverage. Failed dynamic resolution/tests/coverage stop
-analysis without static fallback. Core owns snapshot comparison, traversal and
+collects after-snapshot coverage. Failed dynamic stages are reported explicitly;
+current Core retains independently usable project/engine evidence as partial
+without presenting a static fallback as a successful dynamic analysis. Core owns snapshot comparison, traversal and
 report rendering; the engine supplies shared scan projections and normalized
 JSON coverage. Multi-engine projects use the same command; CMake target selectors
 belong to C++ and are not interpreted here.
@@ -100,8 +106,20 @@ LLVM JSON imports are also accepted. Doctests and per-test attribution are not
 collected. Impact reuses scan's source graph; `--resolve` adds Cargo check for
 both snapshots, not rustc type-directed binding. Candidate edges remain explicit.
 
+Impact includes scoped closure bodies using declaration/call anchors that ignore
+comments, line offsets and CRLF. Repeated indistinguishable anchors stay
+unprojected with an explicit note; they are not paired by ordinal. Declaring or
+passing a closure is not proof of invocation. Enclosing callable changes and
+Cargo manifests/locks, toolchain files and `.cargo/config[.toml]` contexts remain
+visible independently. Configuration changes are unassessed impact, not invented
+call-target changes. Signatures/file moves and anchor changes can appear as
+additions/removals, and aggregate coverage does not establish closure dispatch.
+
 Native runtime acceptance currently targets macOS. Windows package builds and
-ABI smoke checks do not establish equivalent runtime toolchain acceptance.
+ABI smoke checks (including CRLF and Unicode/spaced-path closure projections)
+do not establish equivalent runtime toolchain acceptance. Windows LLVM tool
+discovery uses `.exe` paths; native coverage still requires a compatible Rust
+toolchain and matching LLVM tools on that host.
 Coverage is aggregate execution evidence, not assertion effectiveness or a
 causal test-to-caller path. The common JSON contract is maintained in Scryer
 Core's `docs/contracts/COVERAGE.md` and `docs/contracts/IMPACT.md`.

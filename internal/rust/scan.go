@@ -106,7 +106,7 @@ func Scan(ctx context.Context, root string, selected []string, observers ...Sour
 	architecture := slices.Contains(selected, "architecture")
 	files := slices.Contains(selected, "files")
 	if slices.Contains(selected, "call-graph") {
-		s.graph = &callGraph{ProjectID: root, Basis: "tree-sitter-syntax", Limitations: []string{"type-directed-dispatch", "registry-and-git-crate-symbols", "macro-expansion", "active-cargo-features"}, Symbols: []functionSymbol{}, Calls: []callSite{}, blockers: map[moduleKey]map[string]bool{}}
+		s.graph = &callGraph{ProjectID: root, Basis: "tree-sitter-syntax", Limitations: []string{"type-directed-dispatch", "registry-and-git-crate-symbols", "macro-expansion", "active-cargo-features"}, Symbols: []functionSymbol{}, Calls: []callSite{}, blockers: map[moduleKey]map[string]bool{}, localTypes: map[moduleKey]map[string]typeEvidence{}}
 	}
 	collect := architecture || files || s.graph != nil
 	if !collect && len(observers) == 0 {
@@ -179,7 +179,7 @@ func (s *scanner) scanSources(ctx context.Context, fsys fs.FS, collect bool, obs
 			err = observe(ctx, entry.Path, root, source)
 		}
 		if s.graph != nil {
-			s.graph.contexts = append(s.graph.contexts, analysis.ImpactContext{Path: entry.Path, Fingerprint: analysis.Hash([]byte(tokens(root, source, true)))})
+			s.graph.contexts = append(s.graph.contexts, analysis.ImpactContext{Path: entry.Path, Fingerprint: analysis.Hash([]byte(s.graph.contextTokens(entry.Path, root, source)))})
 		}
 		tree.Close()
 		if err != nil {
@@ -208,6 +208,7 @@ func (s *scanner) collect(ctx context.Context, node *sitter.Node, file, moduleDi
 		scope := testContext(inherited, attributes, child, file, source)
 		if s.graph != nil && moduleContainer(node) {
 			s.graph.block(moduleKey{file, parent}, child, source)
+			s.graph.recordType(moduleKey{file, parent}, child, attributes, source)
 		}
 		switch child.Kind() {
 		case "mod_item":

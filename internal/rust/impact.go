@@ -11,8 +11,8 @@ import (
 	sitter "github.com/tree-sitter/go-tree-sitter"
 )
 
-func tokens(node *sitter.Node, source []byte, outside bool) string {
-	if node == nil || node.Kind() == "line_comment" || node.Kind() == "block_comment" || outside && (node.Kind() == "function_item" || node.Kind() == "closure_expression") {
+func tokens(node *sitter.Node, source []byte) string {
+	if node == nil || node.Kind() == "line_comment" || node.Kind() == "block_comment" {
 		return ""
 	}
 	if node.ChildCount() == 0 {
@@ -21,11 +21,14 @@ func tokens(node *sitter.Node, source []byte, outside bool) string {
 	}
 	var result strings.Builder
 	for i := uint(0); i < node.ChildCount(); i++ {
-		result.WriteString(tokens(node.Child(i), source, outside))
+		result.WriteString(tokens(node.Child(i), source))
 	}
 	return result.String()
 }
 func impactIdentity(file string, node *sitter.Node, source []byte) (string, string, string, string) {
+	if node.Kind() == "closure_expression" {
+		return closureImpactIdentity(file, node, source)
+	}
 	if node.Kind() != "function_item" || node.HasError() {
 		return "", "", "", ""
 	}
@@ -53,9 +56,9 @@ func impactIdentity(file string, node *sitter.Node, source []byte) (string, stri
 	signature := strings.Join(append(scope, name.Utf8Text(source)), "::")
 	key := file + "|" + signature
 	if params := node.ChildByFieldName("parameters"); params != nil {
-		key += "|" + tokens(params, source, false)
+		key += "|" + tokens(params, source)
 	}
-	return key, signature, analysis.Hash([]byte(tokens(node, source, false))), node.Utf8Text(source)
+	return key, signature, analysis.Hash([]byte(tokens(node, source))), node.Utf8Text(source)
 }
 
 func Impact(ctx context.Context, root string, resolve bool) (analysis.ImpactSnapshot, error) {
@@ -70,6 +73,10 @@ func Impact(ctx context.Context, root string, resolve bool) (analysis.ImpactSnap
 	result := analysis.ImpactSnapshot{Symbols: []analysis.ImpactSymbol{}, Calls: []analysis.ImpactCall{}, Contexts: graph.contexts, Notes: []string{
 		"Rust impact reuses scan's source graph. Cargo build validation does not provide rustc type-directed call binding; trait dispatch, macro expansion and inactive cfg paths remain boundaries or source candidates.",
 	}}
+	result.Notes = append(result.Notes, "Closure identities use scoped declaration/call anchors, not offsets. Indistinguishable repeated anchors are omitted from comparison; enclosing source changes remain unassessed. Passing or declaring a closure is not a proven invocation.")
+	if err := appendConfigurationContexts(root, &result); err != nil {
+		return result, err
+	}
 	if resolve {
 		resolution := ResolveGraph(ctx, root, facts)
 		result.Resolution, _ = json.Marshal(resolution)
@@ -79,6 +86,7 @@ func Impact(ctx context.Context, root string, resolve bool) (analysis.ImpactSnap
 	}
 	for _, symbol := range graph.Symbols {
 		if symbol.impactKey == "" {
+			result.Notes = append(result.Notes, fmt.Sprintf("Unprojected callable at %s:%d:%d: malformed syntax or ambiguous correspondence; its changed body cannot be compared independently.", symbol.Definition.File, symbol.Definition.Start.Line, symbol.Definition.Start.Column))
 			continue
 		}
 		raw, _ := json.Marshal(symbol.Definition)
